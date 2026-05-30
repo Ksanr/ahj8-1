@@ -1,102 +1,96 @@
-import { randomUUID } from "node:crypto";
-import http from "node:http";
-import bodyParser from "body-parser";
-import cors from "cors";
-import express from "express";
-import pino from "pino";
-import pinoPretty from "pino-pretty";
-import WebSocket, { WebSocketServer } from "ws";
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const cors = require('cors');
 
 const app = express();
-const logger = pino(pinoPretty());
-
 app.use(cors());
-app.use(
-  bodyParser.json({
-    type(req) {
-      return true;
-    },
-  })
-);
-app.use((req, res, next) => {
-  res.setHeader("Content-Type", "application/json");
-  next();
-});
-
-const userState = [];
-app.post("/new-user", async (request, response) => {
-  if (Object.keys(request.body).length === 0) {
-    const result = {
-      status: "error",
-      message: "This name is already taken!",
-    };
-    response.status(400).send(JSON.stringify(result)).end();
-  }
-  const { name } = request.body;
-  const isExist = userState.find((user) => user.name === name);
-  if (!isExist) {
-    const newUser = {
-      id: randomUUID(),
-      name: name,
-    };
-    userState.push(newUser);
-    const result = {
-      status: "ok",
-      user: newUser,
-    };
-    logger.info(`New user created: ${JSON.stringify(newUser)}`);
-    response.send(JSON.stringify(result)).end();
-  } else {
-    const result = {
-      status: "error",
-      message: "This name is already taken!",
-    };
-    logger.error(`User with name "${name}" already exist`);
-    response.status(409).send(JSON.stringify(result)).end();
-  }
-});
+app.use(express.json());
 
 const server = http.createServer(app);
-const wsServer = new WebSocketServer({ server });
-wsServer.on("connection", (ws) => {
-  ws.on("message", (msg, isBinary) => {
-    const receivedMSG = JSON.parse(msg);
-    logger.info(`Message received: ${JSON.stringify(receivedMSG)}`);
-    // обработка выхода пользователя
-    if (receivedMSG.type === "exit") {
-      const idx = userState.findIndex(
-        (user) => user.name === receivedMSG.user.name
-      );
-      userState.splice(idx, 1);
-      [...wsServer.clients]
-        .filter((o) => o.readyState === WebSocket.OPEN)
-        .forEach((o) => o.send(JSON.stringify(userState)));
-      logger.info(`User with name "${receivedMSG.user.name}" has been deleted`);
-      return;
-    }
-    // обработка отправки сообщения
-    if (receivedMSG.type === "send") {
-      [...wsServer.clients]
-        .filter((o) => o.readyState === WebSocket.OPEN)
-        .forEach((o) => o.send(msg, { binary: isBinary }));
-      logger.info("Message sent to all users");
+const wss = new WebSocket.Server({ server });
+
+let users = [];      // { id, name, ws }
+let messages = [];   // { type, message, user, timestamp }
+
+function getUserByWs(ws) {
+  return users.find(u => u.ws === ws);
+}
+
+function broadcast(data) {
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
     }
   });
-  [...wsServer.clients]
-    .filter((o) => o.readyState === WebSocket.OPEN)
-    .forEach((o) => o.send(JSON.stringify(userState)));
+}
+
+function broadcastUsers() {
+  const userList = users.map(u => ({ id: u.id, name: u.name }));
+  broadcast({ type: 'users', users: userList });
+}
+
+wss.on('connection', (ws) => {
+  console.log('New client connected');
+
+  ws.on('message', (raw) => {
+    let data;
+    try {
+      data = JSON.parse(raw);
+      console.log('Message received:', data);
+    } catch (err) {
+      console.error('Invalid JSON', err);
+      return;
+    }
+
+    if (data.type === 'join') {
+      const { name } = data;
+      // Проверка занятости имени
+      if (users.some(u => u.name === name)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Никнейм уже занят' }));
+        return;
+      }
+      const id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString();
+      const newUser = { id, name, ws };
+      users.push(newUser);
+
+      // Отправляем новому пользователю подтверждение, список пользователей и историю
+      ws.send(JSON.stringify({
+        type: 'join_success',
+        user: { id, name },
+        messages: messages.slice(-50)   // последние 50 сообщений
+      }));
+
+      // Оповещаем всех остальных о новом пользователе
+      broadcast({ type: 'user_joined', user: { id, name } });
+      broadcastUsers();
+    }
+    else if (data.type === 'send') {
+      const user = getUserByWs(ws);
+      if (!user) return;
+      const messageData = {
+        type: 'message',
+        message: data.message,
+        user: { id: user.id, name: user.name },
+        timestamp: new Date().toISOString()
+      };
+      messages.push(messageData);
+      // Ограничиваем историю 100 сообщениями
+      if (messages.length > 100) messages.shift();
+      broadcast(messageData);
+    }
+  });
+
+  ws.on('close', () => {
+    const user = getUserByWs(ws);
+    if (user) {
+      users = users.filter(u => u.id !== user.id);
+      broadcast({ type: 'user_left', user: { id: user.id, name: user.name } });
+      broadcastUsers();
+    }
+    console.log('Client disconnected');
+  });
 });
 
-const port = process.env.PORT || 3000;
-
-const bootstrap = async () => {
-  try {
-    server.listen(port, () =>
-      logger.info(`Server has been started on http://localhost:${port}`)
-    );
-  } catch (error) {
-    logger.error(`Error: ${error.message}`);
-  }
-};
-
-bootstrap();
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
