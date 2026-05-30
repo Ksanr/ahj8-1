@@ -47,7 +47,7 @@ class ChatApp {
   }
 
   connectWebSocket(name, errorDiv, overlay) {
-    const backendUrl = 'ws://localhost:3000'; // заменить на продакшен URL
+    const backendUrl = process.env.WS_BACKEND_URL || 'ws://localhost:3000';
     this.ws = new WebSocket(backendUrl);
 
     this.ws.onopen = () => {

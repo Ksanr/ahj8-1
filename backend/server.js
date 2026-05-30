@@ -45,7 +45,6 @@ wss.on('connection', (ws) => {
 
     if (data.type === 'join') {
       const { name } = data;
-      // Проверка занятости имени
       if (users.some(u => u.name === name)) {
         ws.send(JSON.stringify({ type: 'error', message: 'Никнейм уже занят' }));
         return;
@@ -54,14 +53,12 @@ wss.on('connection', (ws) => {
       const newUser = { id, name, ws };
       users.push(newUser);
 
-      // Отправляем новому пользователю подтверждение, список пользователей и историю
       ws.send(JSON.stringify({
         type: 'join_success',
         user: { id, name },
-        messages: messages.slice(-50)   // последние 50 сообщений
+        messages: messages.slice(-50)
       }));
 
-      // Оповещаем всех остальных о новом пользователе
       broadcast({ type: 'user_joined', user: { id, name } });
       broadcastUsers();
     }
@@ -75,7 +72,6 @@ wss.on('connection', (ws) => {
         timestamp: new Date().toISOString()
       };
       messages.push(messageData);
-      // Ограничиваем историю 100 сообщениями
       if (messages.length > 100) messages.shift();
       broadcast(messageData);
     }
@@ -92,5 +88,6 @@ wss.on('connection', (ws) => {
   });
 });
 
+// ИСПРАВЛЕНИЕ ЗДЕСЬ: слушаем '0.0.0.0' и порт из окружения
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));

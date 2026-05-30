@@ -33,8 +33,10 @@ jobs:
       - name: Install dependencies
         run: yarn install
 
-      - name: Build frontend
+      - name: Build
         run: yarn build
+        env:
+          WS_BACKEND_URL: ${{ vars.WS_BACKEND_URL }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
