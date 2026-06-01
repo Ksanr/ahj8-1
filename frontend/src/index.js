@@ -6,6 +6,10 @@ class ChatApp {
     this.currentUser = null;
     this.users = [];
     this.init();
+
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectDelay = 1000; // начальная задержка 1 секунда
   }
 
   init() {
@@ -66,6 +70,16 @@ class ChatApp {
 
     this.ws.onerror = () => {
       errorDiv.textContent = 'Ошибка соединения с сервером';
+    };
+
+    this.ws.onclose = (event) => {
+      console.log('WebSocket closed', event.code, event.reason);
+      this.showNotification('Соединение с сервером потеряно. Попытка восстановления...', 'warning');
+
+      // пытаемся переподключиться, если чат ещё активен (модалка закрыта)
+      if (!overlay.isConnected && this.currentUser) {
+        this.reconnect(name, overlay);
+      }
     };
   }
 
@@ -204,6 +218,35 @@ class ChatApp {
     sysDiv.textContent = text;
     messagesArea.append(sysDiv);
     messagesArea.scrollTop = messagesArea.scrollHeight;
+  }
+
+  reconnect(name, overlay) {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.showNotification('Не удалось восстановить соединение. Перезагрузите страницу.', 'error');
+      return;
+    }
+
+    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts); // экспоненциальная задержка
+    this.reconnectAttempts++;
+
+    setTimeout(() => {
+      console.log(`Reconnecting attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+      this.connectWebSocket(name, null, overlay);
+    }, delay);
+  }
+
+  showNotification(message, type = 'info') {
+    // удаляем старое уведомление, если есть
+    const existing = document.querySelector('.ws-notification');
+    if (existing) existing.remove();
+
+    const notification = document.createElement('div');
+    notification.className = `ws-notification ws-notification-${type}`;
+    notification.textContent = message;
+    document.body.append(notification);
+
+    // автоматическое исчезновение через 5 секунд
+    setTimeout(() => notification.remove(), 5000);
   }
 }
 
